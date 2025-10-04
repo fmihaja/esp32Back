@@ -13,6 +13,7 @@ DB_CONFIG = {
     'password': 'npg_hUoN63HfFyRe',
     'database': 'koyebdb',
     'port': 5432,
+     'sslmode': 'require', 
     'cursor_factory': RealDictCursor
 }
 
@@ -23,10 +24,12 @@ T = TypeVar("T")
 class Device(BaseModel):
     id: Optional[int]
     status: bool  # True pour allumé, False pour éteint
+    name: str
 
 class DeviceResponse(BaseModel):
     id: int
     status: bool
+    name: str
 
 class ApiResponse(GenericModel, Generic[T]):
     data: T
@@ -84,11 +87,12 @@ def create_device_status(device: Device):
             device_id = cursor.fetchone()['id']
             connection.commit()
 
-            cursor.execute("SELECT id, status FROM device WHERE id = %s", (device_id,))
+            cursor.execute("SELECT id, status, name FROM device WHERE id = %s", (device_id,))
             device_data = cursor.fetchone()
             response = DeviceResponse(
                 id=device_data['id'],
-                status=bool(device_data['status'])
+                status=bool(device_data['status']),
+                name=device_data['name']
             )
             return ApiResponse(data=response, message="Creation fait")
 
@@ -97,14 +101,15 @@ def get_all_device_status(skip: int = 0, limit: int = 100):
     with get_db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id, status FROM device ORDER BY id ASC LIMIT %s OFFSET %s",
+                "SELECT id, status, name FROM device ORDER BY id ASC LIMIT %s OFFSET %s",
                 (limit, skip)
             )
             device_data = cursor.fetchall()
             if not device_data:
                 raise HTTPException(status_code=404, detail="device non trouvé")
             response = [
-                DeviceResponse(id=device['id'], status=bool(device['status'])) for device in device_data
+                
+                DeviceResponse(id=device['id'], status=bool(device['status']), name=device['name']) for device in device_data
             ]
             return ApiResponse(data=response, message="Liste des lampes")
 
@@ -112,11 +117,11 @@ def get_all_device_status(skip: int = 0, limit: int = 100):
 def get_device_status(device_id: int):
     with get_db_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id, status FROM device WHERE id = %s", (device_id,))
+            cursor.execute("SELECT id, status, name FROM device WHERE id = %s", (device_id,))
             device_data = cursor.fetchone()
             if not device_data:
                 raise HTTPException(status_code=404, detail="device non trouvée")
-            response = DeviceResponse(id=device_data['id'], status=bool(device_data['status']))
+            response = DeviceResponse(id=device_data['id'], status=bool(device_data['status']), name=device_data['name'])
             return ApiResponse(data=response, message="Lampe numero " + str(response.id))
 
 @app.put("/device/{device_id}", response_model=ApiResponse[DeviceResponse])
@@ -127,12 +132,12 @@ def update_device_status(device: Device):
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail="device non trouvée")
 
-            cursor.execute("UPDATE device SET status = %s WHERE id = %s RETURNING id, status",
+            cursor.execute("UPDATE device SET status = %s WHERE id = %s RETURNING id, status, name",
                            (device.status, device.id))
             device_data = cursor.fetchone()
             connection.commit()
 
-            response = DeviceResponse(id=device_data['id'], status=bool(device_data['status']))
+            response = DeviceResponse(id=device_data['id'], status=bool(device_data['status']), name=device_data['name'])
             return ApiResponse(data=response, message="Lampe numero " + str(response.id) + " Modifier")
 
 @app.delete("/device/{device_id}")
@@ -153,14 +158,14 @@ def toggle_device():
             last_status = cursor.fetchone()
             new_status = not bool(last_status['status']) if last_status else True
 
-            cursor.execute("INSERT INTO device (status) VALUES (%s) RETURNING id", (new_status,))
+            cursor.execute("INSERT INTO device (status) VALUES (%s) RETURNING id, name", (new_status,))
             device_id = cursor.fetchone()['id']
             connection.commit()
 
-            cursor.execute("SELECT id, status FROM device WHERE id = %s", (device_id,))
+            cursor.execute("SELECT id, status, name FROM device WHERE id = %s", (device_id,))
             device_data = cursor.fetchone()
 
-            return DeviceResponse(id=device_data['id'], status=bool(device_data['status']))
+            return DeviceResponse(id=device_data['id'], status=bool(device_data['status']), name=device_data['name'])
 
 if __name__ == "__main__":
     import uvicorn
