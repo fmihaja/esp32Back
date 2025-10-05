@@ -1,10 +1,16 @@
-from fastapi import FastAPI, HTTPException
+# from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from contextlib import contextmanager
 from typing import List, Optional, Generic, TypeVar
 from pydantic.generics import GenericModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import face_recognition
+import numpy as np
+from PIL import Image
+import io
 
 # Configuration PostgreSQL (Koyeb)
 DB_CONFIG = {
@@ -18,6 +24,43 @@ DB_CONFIG = {
 }
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def load_image_from_upload(upload_file: UploadFile):
+    """Charge une image depuis un fichier uploadé"""
+    try:
+        image_data = upload_file.file.read()
+        image = Image.open(io.BytesIO(image_data))
+        # Convertir en RGB si nécessaire
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        return np.array(image)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erreur lors du chargement de l'image: {str(e)}")
+
+def get_face_encoding(image_array):
+    """Extrait l'encodage facial d'une image"""
+    face_locations = face_recognition.face_locations(image_array)
+    
+    if len(face_locations) == 0:
+        raise HTTPException(status_code=400, detail="Aucun visage détecté dans l'image")
+    
+    # Si plusieurs visages, utiliser le plus grand (probablement le visage principal)
+    if len(face_locations) > 1:
+        # Calculer la taille de chaque visage et prendre le plus grand
+        face_sizes = [(loc[2] - loc[0]) * (loc[1] - loc[3]) for loc in face_locations]
+        largest_face_index = face_sizes.index(max(face_sizes))
+        face_locations = [face_locations[largest_face_index]]
+    
+    face_encodings = face_recognition.face_encodings(image_array, face_locations)
+    return face_encodings[0]
+
 T = TypeVar("T")
 
 # Modèles Pydantic
@@ -30,6 +73,10 @@ class DeviceResponse(BaseModel):
     id: int
     status: bool
     name: str
+
+class FaceMatchResponse(BaseModel):
+    status: bool             # True = correspondance, False = pas de correspondance
+    message: str             # Message descriptif
 
 class ApiResponse(GenericModel, Generic[T]):
     data: T
@@ -166,6 +213,43 @@ def toggle_device():
             device_data = cursor.fetchone()
 
             return DeviceResponse(id=device_data['id'], status=bool(device_data['status']), name=device_data['name'])
+        
+@app.post("/compare-faces", response_model=FaceMatchResponse)
+async def compare_faces(
+    camera_image: UploadFile = File(..., description="Image capturée par la caméra"),
+    stored_image: UploadFile = File(..., description="Image stockée sur l'appareil")
+):
+    """
+    Compare deux images de visages et retourne la correspondance.
+    
+    Args:
+        camera_image: Image capturée en temps réel par la caméra
+        stored_image: Image stockée dans l'appareil (chemin depuis SQLite)
+    
+    Returns:
+        FaceMatchResponse: Résultat de la comparaison
+    """
+    try:
+        # Charger les deux images
+        camera_array = load_image_from_upload(camera_image)
+        stored_array = load_image_from_upload(stored_image)
+        
+        # Extraire les encodages faciaux
+        camera_encoding = get_face_encoding(camera_array)
+        stored_encoding = get_face_encoding(stored_array)
+        
+        # Comparer les visages
+        is_match = face_recognition.compare_faces([stored_encoding], camera_encoding, tolerance=0.6)[0]
+        
+        return FaceMatchResponse(
+            status=bool(is_match),
+            message="Visages correspondants !" if is_match else "Visages différents"
+        )
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la comparaison: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
