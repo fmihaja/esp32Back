@@ -1,0 +1,85 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+// Configuration WiFi
+const char* ssid = "Meik Phone R7";
+const char* password = "meikandria";
+const char* serverName = "http://51.21.225.196:8000/gas-detector";
+
+// Pin du capteur de gaz
+const int Gaz = 34;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.println("\n\n=== Démarrage ESP32 Gas Detector ===");
+  
+  // Connexion WiFi
+  Serial.print("Connexion au WiFi");
+  WiFi.begin(ssid, password);
+  
+  int tentatives = 0;
+  while (WiFi.status() != WL_CONNECTED && tentatives < 20) {
+    delay(500);
+    Serial.print(".");
+    tentatives++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✅ WiFi connecté !");
+    Serial.print("Adresse IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n❌ Échec connexion WiFi");
+  }
+}
+
+void loop() {
+  // Vérifier la connexion WiFi
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ WiFi déconnecté ! Reconnexion...");
+    WiFi.reconnect();
+    delay(5000);
+    return;
+  }
+  
+  // Lecture du capteur de gaz
+  int gazValue = analogRead(Gaz);
+  Serial.print("📊 Valeur gaz: ");
+  Serial.print(gazValue);
+  
+  // Envoi des données au serveur
+  HTTPClient http;
+  http.begin(serverName);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000); // Timeout de 5 secondes
+  
+  String jsonData = "{\"value\":" + String(gazValue) + "}";
+  
+  Serial.print(" | Envoi au serveur... ");
+  int httpResponseCode = http.POST(jsonData);
+  
+  // Affichage du résultat
+  if (httpResponseCode > 0) {
+    Serial.print("✅ Code: ");
+    Serial.print(httpResponseCode);
+    
+    if (httpResponseCode == 200) {
+      String response = http.getString();
+      Serial.print(" | Réponse: ");
+      Serial.println(response);
+    } else {
+      Serial.println();
+    }
+  } else {
+    Serial.print("❌ Erreur: ");
+    Serial.println(http.errorToString(httpResponseCode));
+  }
+  
+  http.end();
+  
+  // Attendre 1 seconde avant la prochaine lecture
+  delay(1000);
+}

@@ -1,0 +1,46 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#define SIM800_TX_PIN 17  // Broche TX de l'ESP32 vers RX du SIM800L
+#define SIM800_RX_PIN 16  // Broche RX de l'ESP32 depuis TX du SIM800L
+
+
+unsigned long lastGasAlert = 0;
+
+const char* ssid = "Meik Phone R7";
+const char* password = "meikandria";
+const char* serverName = "http://51.21.225.196:8000/gas-detector";
+
+const int Gaz = 34;
+bool gasAlertSent = false;
+
+HardwareSerial sim800l(2);
+
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED){
+    delay(500);
+    Serial.print("\nWiFi connecté !");
+  }
+}
+
+void loop(){
+  if (WiFi.status() == WL_CONNECTED) {
+    int gazValue = analogRead(Gaz);
+
+    HTTPClient http;
+    http.begin(serverName);
+    http.addHeader("content-type", "application/json");
+
+    String jsonData = "{\"value\":" + String(gazValue) + "}";
+    int httpResponseCode = http.POST(jsonData);
+
+    Serial.print("code réponse : ");
+    Serial.println(httpResponseCode);
+    http.end();
+  }
+
+  delay (1000);
+}
